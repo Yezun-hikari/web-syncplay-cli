@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Web Syncplay</title>
+    <style>
+        body { font-family: sans-serif; }
+        #container { max-width: 800px; margin: 0 auto; }
+        #video-container { margin-bottom: 1em; }
+        #file-browser { margin-bottom: 1em; }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <h1>Web Syncplay</h1>
+        <div id="syncplay-controls">
+            <h2>Syncplay Controls</h2>
+            <label for="server">Server:</label>
+            <input type="text" id="server" value="syncplay.pl:8999">
+            <label for="room">Room:</label>
+            <input type="text" id="room" value="room1">
+            <label for="username">Username:</label>
+            <input type="text" id="username" value="user1">
+            <button id="connect">Connect</button>
+        </div>
+        <div id="file-browser">
+            <h2>File Browser</h2>
+            <ul id="file-list"></ul>
+        </div>
+        <div id="video-container">
+            <video id="video-player" width="100%" controls></video>
+        </div>
+        <div id="chat">
+            <h2>Chat</h2>
+            <div id="chat-messages"></div>
+            <input type="text" id="chat-input" placeholder="Type a message...">
+        </div>
+    </div>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const socket = io.connect(location.protocol + '//' + document.domain + ':' + location.port + '/sync');
+
+            const fileList = document.getElementById('file-list');
+            const videoPlayer = document.getElementById('video-player');
+            const connectBtn = document.getElementById('connect');
+            const serverInput = document.getElementById('server');
+            const roomInput = document.getElementById('room');
+            const usernameInput = document.getElementById('username');
+            const chatMessages = document.getElementById('chat-messages');
+
+            let currentVideoPath = '';
+
+            // Fetch and display the list of video files
+            fetch('/api/videos')
+                .then(response => response.json())
+                .then(videos => {
+                    videos.forEach(video => {
+                        const listItem = document.createElement('li');
+                        const link = document.createElement('a');
+                        link.href = '#';
+                        link.textContent = video;
+                        link.addEventListener('click', (e) => {
+                            e.preventDefault();
+                            currentVideoPath = video;
+                            videoPlayer.src = `/videos/${video}`;
+                            // Don't auto-play, wait for Syncplay connection
+                        });
+                        listItem.appendChild(link);
+                        fileList.appendChild(listItem);
+                    });
+                });
+
+            connectBtn.addEventListener('click', () => {
+                if (currentVideoPath) {
+                    socket.emit('connect_syncplay', {
+                        server: serverInput.value,
+                        room: roomInput.value,
+                        username: usernameInput.value,
+                        videoPath: currentVideoPath
+                    });
+                } else {
+                    alert('Please select a video first.');
+                }
+            });
+
+            videoPlayer.addEventListener('play', () => {
+                socket.emit('playback_action', { action: 'play' });
+            });
+
+            videoPlayer.addEventListener('pause', () => {
+                socket.emit('playback_action', { action: 'pause' });
+            });
+
+            videoPlayer.addEventListener('seeked', () => {
+                socket.emit('playback_action', { action: 'seek', position: videoPlayer.currentTime });
+            });
+
+            socket.on('syncplay_output', (msg) => {
+                console.log('Syncplay:', msg.data);
+                const chatMessage = document.createElement('p');
+                chatMessage.textContent = msg.data;
+                chatMessages.appendChild(chatMessage);
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+
+                // Basic parsing of syncplay output to control the player
+                const parts = msg.data.split(' ');
+                if (msg.data.includes('paused')) {
+                    videoPlayer.pause();
+                } else if (msg.data.includes('unpaused')) {
+                    videoPlayer.play();
+                } else if (msg.data.includes('Seek to')) {
+                    const time = parseFloat(parts[parts.length - 2]);
+                    if (!isNaN(time) && Math.abs(videoPlayer.currentTime - time) > 2) { // 2s threshold
+                        videoPlayer.currentTime = time;
+                    }
+                }
+            });
+
+            socket.on('status', (msg) => {
+                console.log('Status:', msg.message);
+                const statusMessage = document.createElement('p');
+                statusMessage.textContent = msg.message;
+                chatMessages.appendChild(statusMessage);
+            });
+
+            const chatInput = document.getElementById('chat-input');
+            chatInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && chatInput.value.trim() !== '') {
+                    socket.emit('chat_message', { message: chatInput.value });
+                    chatInput.value = '';
+                }
+            });
+        });
+    </script>
+</body>
+</html>
